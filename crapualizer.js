@@ -298,6 +298,10 @@ function handleStep(evt) {
     if (val==sel_step) return;
     sel_step = val;
     document.getElementById('step_display').textContent = evt.target.value;
+    [pl_speed, pl_angle, pl_lane].forEach(function (pl) {
+        pl.getOptions().grid.markings = [ { xaxis: { from: val, to: val }, color: "#bb0000" } ];
+        pl.draw();
+    });
     drawTrack();
 }
 document.getElementById('step').addEventListener('change', handleStep, false);
