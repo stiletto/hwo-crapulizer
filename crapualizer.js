@@ -8,7 +8,7 @@ document.addEventListener( "DOMContentLoaded", function () {
 var cv = document.getElementById('cv');
 var status = document.getElementById('status');
 var step_slider = document.getElementById('step');
-var pl_speed, pl_angle;
+var pl_speed, pl_angle, pl_lane;
 
 function drawTrack() {
     cv.height = cv.offsetHeight;//1000;
@@ -22,7 +22,13 @@ function drawTrack() {
     ctx.clearRect(0,0,cv.width,cv.height);
     ctx.scale(xscale,yscale);
     ctx.translate(-bbox.min[0],-bbox.min[1]);
-    var cur_pos = data.steps[sel_step].positions[sel_car].piecePosition;
+    var cur_pos = data.steps[sel_step].positions[sel_car];
+    var cur_angle;
+    if ('angleOffset' in cur_pos)
+        cur_angle = cur_pos.angleOffset;
+    else
+        cur_angle = cur_pos.angle;
+    cur_pos = cur_pos.piecePosition;
     var cur_piece_id = cur_pos.pieceIndex;
     data.track.pieces.forEach(function (piece, num) {
         ctx.save();
@@ -36,18 +42,22 @@ function drawTrack() {
         ctx.rotate(piece.startAngle/180*Math.PI);
         if (piece.radius) {
             ctx.strokeStyle = (num==cur_piece_id) ? "#00BB00" : "#BB0000";
+            if(piece["switch"]) { ctx.beginPath(); ctx.save(); }
             data.track.lanes.forEach(function (lane) {
-                ctx.save();
-                ctx.beginPath();
+                if(!piece["switch"]) { ctx.beginPath(); ctx.save(); }
+                
                 if (piece.angle<0) {
                     ctx.arc(0,-piece.radius,piece.radius+lane.distanceFromCenter,0.5*Math.PI,(0.5+piece.angle/180)*Math.PI,true);
                 } else {
                     ctx.arc(0,piece.radius,piece.radius-lane.distanceFromCenter,1.5*Math.PI,(piece.angle/180+1.5)*Math.PI);
                 }
-                ctx.lineTo(piece.length,0);
-                ctx.stroke();
-                ctx.restore();
+                //ctx.lineTo(piece.length,0);
+                
+                if(!piece["switch"]) { ctx.stroke(); ctx.restore(); }
             });
+            if(piece["switch"]) { 
+                ctx.lineTo(0,data.track.lanes[0].distanceFromCenter);
+                ctx.stroke(); ctx.restore(); }
         } else {
             ctx.strokeStyle = (num==cur_piece_id) ? "#00BB00" : "#000000";
             data.track.lanes.forEach(function (lane) {
@@ -59,6 +69,18 @@ function drawTrack() {
                 ctx.stroke();
                 ctx.restore();
             });
+            if (piece["switch"]) {
+                ctx.save();
+                var firstlane = data.track.lanes[0];
+                var lastlane = data.track.lanes[data.track.lanes.length - 1];
+                ctx.beginPath();
+                ctx.moveTo(0,firstlane.distanceFromCenter);
+                ctx.lineTo(piece.length,lastlane.distanceFromCenter);
+                ctx.moveTo(piece.length,firstlane.distanceFromCenter);
+                ctx.lineTo(0,lastlane.distanceFromCenter);
+                ctx.stroke();
+                ctx.restore();
+            }
             //ctx.
         }
         //ctx.translate(10,-10);
@@ -66,33 +88,48 @@ function drawTrack() {
     });
     var cur_piece = data.track.pieces[cur_piece_id];
     var cur_lane = data.track.lanes[cur_pos.lane.startLaneIndex];
+    var cur_car = data.cars[sel_car];
     ctx.save();
     ctx.translate(cur_piece.startX,cur_piece.startY);
     ctx.rotate(cur_piece.startAngle/180*Math.PI);
     ctx.fillStyle = '#FF00FF';
+    var piece_length = 0;
     if (cur_piece.radius) {
-        var piece_length = 2*Math.PI*(cur_piece.radius+cur_lane.distanceFromCenter*((cur_piece.angle < 0)?1:-1));
+        piece_length = 2*Math.PI*(cur_piece.radius+cur_lane.distanceFromCenter*((cur_piece.angle < 0)?1:-1));
         piece_length *= Math.abs(cur_piece.angle)/360;
         var cur_pos_angle = cur_pos.inPieceDistance/piece_length * cur_piece.angle;
         if (cur_piece.angle<0) {
             ctx.translate(0,-cur_piece.radius);
             ctx.rotate(cur_pos_angle/180*Math.PI);
-            ctx.beginPath();
-            ctx.arc(0,cur_piece.radius+cur_lane.distanceFromCenter,3,0,2*Math.PI);
+            ctx.translate(0,cur_piece.radius+cur_lane.distanceFromCenter);
         } else {
             ctx.translate(0,cur_piece.radius);
             ctx.rotate(cur_pos_angle/180*Math.PI);
             ctx.beginPath();
-            ctx.arc(0,-cur_piece.radius-cur_lane.distanceFromCenter,3,0,2*Math.PI);
+            ctx.translate(0,-cur_piece.radius+cur_lane.distanceFromCenter);
         }
-        ctx.fill();
-        //ctx.beginPath();
     } else {
-        ctx.beginPath();
-        //alert(JSON.stringify(cur_pos));
-        ctx.arc(cur_pos.inPieceDistance,cur_lane.distanceFromCenter,3,0,2*Math.PI);
-        ctx.fill();
+        piece_length = cur_piece.length;
+        ctx.translate(cur_pos.inPieceDistance,cur_lane.distanceFromCenter);
     }
+    if (cur_pos.lane.startLaneIndex != cur_pos.lane.endLaneIndex) {
+        var next_lane = data.track.lanes[cur_pos.lane.endLaneIndex];
+        ctx.translate(0,(next_lane.distanceFromCenter-cur_lane.distanceFromCenter)*cur_pos.inPieceDistance/piece_length);
+    }
+    ctx.beginPath();
+    ctx.arc(0,0,3,0,2*Math.PI);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.lineTo(10,0);
+    ctx.stroke();
+
+    ctx.rotate(cur_angle/180*Math.PI);
+    ctx.beginPath();
+    ctx.rect(cur_car.dimensions.guideFlagPosition-cur_car.dimensions.length,-cur_car.dimensions.width/2,
+             cur_car.dimensions.length,cur_car.dimensions.width);
+    ctx.stroke();
+    //ctx.fillText('ХУЙ '+cur_pos.lane.startLaneIndex, 5,-5);
     ctx.restore();
     ctx.beginPath();
     var bbox = data.track.bbox;
@@ -115,6 +152,7 @@ function drawTrack() {
 function generatePlots() {
     var speed_plot = [];
     var angle_plot = [];
+    var lane_plot = [];
     data.steps.forEach(function (step, step_no) {
         var speed = Math.sqrt(Math.pow(step.velocities[sel_car].x,2) + Math.pow(step.velocities[sel_car].y,2));
         speed_plot.push([step_no, speed]);
@@ -122,10 +160,12 @@ function generatePlots() {
             angle_plot.push([step_no, step.positions[sel_car].angleOffset]);
         else
             angle_plot.push([step_no, step.positions[sel_car].angle]);
+        lane_plot.push([step_no, step.positions[sel_car].piecePosition.lane.startLaneIndex]);
     });
     //console.log(speed_plot);
     pl_speed = $.plot($("#pl_speed"), [speed_plot], {});// yaxis: { max: 1 } });
     pl_angle = $.plot($("#pl_angle"), [angle_plot], {});// yaxis: { max: 1 } });
+    pl_lane = $.plot($("#pl_lane"), [lane_plot], {});// yaxis: { max: 1 } });
 }
 
 function calculatePositions(track) {
