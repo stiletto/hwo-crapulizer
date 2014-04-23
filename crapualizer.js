@@ -9,6 +9,7 @@ var cv = document.getElementById('cv');
 var status = document.getElementById('status');
 var step_slider = document.getElementById('step');
 var pl_speed, pl_angle, pl_lane;
+var pl_telemetry = [];
 
 function drawTrack() {
     cv.height = cv.offsetHeight;//1000;
@@ -151,21 +152,59 @@ function drawTrack() {
 
 function generatePlots() {
     var speed_plot = [];
+    var cspeed_plot = [];
     var angle_plot = [];
     var lane_plot = [];
+    var prevDist = 0;
+    var prevPiece = -1;
+    var prevSpeed = 0;
+    var teldiv = document.getElementById('telemetry');
+    pl_telemetry = [];
+    var telemetry_points = {};
+    for (key in data.telemetry_keys) telemetry_points[key]=[];
     data.steps.forEach(function (step, step_no) {
-        var speed = Math.sqrt(Math.pow(step.velocities[sel_car].x,2) + Math.pow(step.velocities[sel_car].y,2));
-        speed_plot.push([step_no, speed]);
+        var speed = 0;
+        if (step.velocities) {
+            speed = Math.sqrt(Math.pow(step.velocities[sel_car].x,2) + Math.pow(step.velocities[sel_car].y,2));
+            speed_plot.push([step_no, speed]);
+        }// else {
+            var dist = step.positions[sel_car].piecePosition.inPieceDistance;
+            var piece_id = step.positions[sel_car].piecePosition.pieceIndex;
+            if (piece_id == prevPiece)
+                speed = dist - prevDist;
+            else
+                speed = prevSpeed;
+            prevDist = dist;
+            prevPiece = piece_id;
+            prevSpeed = speed;
+            cspeed_plot.push([step_no, speed]);
+        //}
+        if (step.telemetry) {
+            for (key in data.telemetry_keys) {
+                telemetry_points[key].push([step_no,step.telemetry[key]]);
+            }
+        }
         if ('angleOffset' in step.positions[sel_car])
             angle_plot.push([step_no, step.positions[sel_car].angleOffset]);
         else
             angle_plot.push([step_no, step.positions[sel_car].angle]);
         lane_plot.push([step_no, step.positions[sel_car].piecePosition.lane.startLaneIndex]);
     });
+    teldiv.innerHTML = '';
+    console.log(telemetry_points);
+    for (key in data.telemetry_keys) {
+        var div = document.createElement('div');
+        div.id = "pl_t_"+key;
+        div.style.height = '200px';
+        div.style.width = '100%';
+        teldiv.appendChild(div);
+        pl_telemetry.push($.plot(div, [{label: key, data:telemetry_points[key]}], {}));
+    }
     //console.log(speed_plot);
-    pl_speed = $.plot($("#pl_speed"), [speed_plot], {});// yaxis: { max: 1 } });
-    pl_angle = $.plot($("#pl_angle"), [angle_plot], {});// yaxis: { max: 1 } });
-    pl_lane = $.plot($("#pl_lane"), [lane_plot], {});// yaxis: { max: 1 } });
+    pl_speed = $.plot($("#pl_speed"), [{label: 'Calculated speed', data:cspeed_plot},
+                                       {label: 'Provided speed', data:speed_plot}], {});// yaxis: { max: 1 } });
+    pl_angle = $.plot($("#pl_angle"), [{label: 'Slip angle', data:angle_plot}], {});// yaxis: { max: 1 } });
+    pl_lane = $.plot($("#pl_lane"), [{label: 'Current lane', data:lane_plot}], {});// yaxis: { max: 1 } });
 }
 
 function calculatePositions(track) {
@@ -255,15 +294,21 @@ function loadJSON(evt) {
                     nd.raceSession = packet.data.race.raceSession;
                     nd.gameId = packet.gameId;
                     nd.steps = [];
+                    nd.telemetry_keys = {};
                     calculatePositions(nd.track);
                     //console.log(JSON.stringify(nd));
                     break;
+                case "carPositions":
                 case "fullCarPositions":
-                    nd.steps.push({positions:packet.data});
+                    nd.steps.push({positions:packet.data, tick: packet.gameTick});
                     break;
                 case "carVelocities":
                     nd.steps[nd.steps.length-1].velocities = packet.data;
                     break;
+                case "telemetry":
+                    for (key in packet.data)
+                      nd.telemetry_keys[key] = 1;
+                    nd.steps[nd.steps.length-1].telemetry = packet.data;
             }
         });
         data = nd;
@@ -297,8 +342,8 @@ function handleStep(evt) {
     var val = evt.target.value;
     if (val==sel_step) return;
     sel_step = val;
-    document.getElementById('step_display').textContent = evt.target.value;
-    [pl_speed, pl_angle, pl_lane].forEach(function (pl) {
+    document.getElementById('step_display').textContent = data.steps[val].tick;
+    [pl_speed, pl_angle, pl_lane].concat(pl_telemetry).forEach(function (pl) {
         pl.getOptions().grid.markings = [ { xaxis: { from: val, to: val }, color: "#bb0000" } ];
         pl.draw();
     });
